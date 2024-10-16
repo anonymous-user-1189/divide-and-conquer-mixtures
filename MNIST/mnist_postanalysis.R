@@ -2,6 +2,9 @@
 #Analysis of results from MNIST runs
 #####
 
+library(pheatmap)
+library(tidyverse)
+library(ggplotify)
 #####
 #Heatmaps
 #####
