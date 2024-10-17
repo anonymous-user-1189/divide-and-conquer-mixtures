@@ -23,7 +23,7 @@ All hyperparameters etc. for running sMerDel for the EHR data are detailed in th
 
 -**comparing-merge-criteria**: 'comparingmergesim1a.R, comparingmergesim1b.R' are two halves of the same simulation, as are 'comparingmergesim2a.R, comparingmergesim2b.R'. Demonstrations for making plots etc. are in 'comparingmerge_plots.R'
 
--**categorical-sims**: No scripts for plotting are here - refer to the equivalent simulations for binary data to create the plots. 'freqmerdelsim-cat-x.R' are simulations for the frequency of merge/delete moves, 'globalmergeSim1Cat.R' and 'globalmergeSim2Cat.R' are simulations equivalent to 'global-merge-sims', 'globalmerge_noshardsCat.R' is a simulation equivalent to 'number-of-shards'.
+-**categorical-sims**: No scripts for plotting are here - refer to the equivalent simulations for binary data to create the plots. 'freqmerdelsim-cat-x.R' are simulations for the frequency of merge/delete moves, 'globalmergeSim1Cat.R' and 'globalmergeSim2Cat.R' are simulations equivalent to 'global-merge-sims'.
 
 -**global-merge-varsel**: No scripts for plotting are here - refer to the equivalent simulations for binary data to create the plots.
 
