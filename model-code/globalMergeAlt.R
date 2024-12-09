@@ -6,7 +6,7 @@ library(abind)
 Rcpp::sourceCpp('MergesCpp.cpp')
 Rcpp::sourceCpp('MixModelArmaNew.cpp')
 
-globalMergeAlt <- function(shard_results, prior){
+globalMergeAlt <- function(shard_results, prior, Kinit){
   
   shard_results <- lapply(shard_results, function(x) {
     x[c("alpha", "eps", "labels", "rnk")]
@@ -15,7 +15,7 @@ globalMergeAlt <- function(shard_results, prior){
   num_clusters <- lapply(shard_results, '[[', 3 )
   num_clusters <- as.vector(unlist(lapply(num_clusters, function(x) length(unique(x))))) #clusters in each shard
   
-  Ktotal = sum(num_clusters)
+  Ktotal = sum(num_clusters) #Total number of NON EMPTY clusters
   B = length(shard_results)
   
   prioralpha <- prior$alpha
@@ -44,7 +44,7 @@ globalMergeAlt <- function(shard_results, prior){
   }
   
   entropy <- initialentNoParCalc(shard_results) #CALCULATE ENTROPY FOR ALL BATCHES GIVEN COLUMNS. 
-  currentELBO <- globalELBOCalcAlt(shard_results, entropy, prior) #Should take into account entropy 
+  currentELBO <- globalELBOCalcAlt(shard_results, entropy, prior, Kinit) #Should take into account entropy 
   mergerejects <- 0
   
   while(mergerejects < 10){ #Stop merging if we have rejected 10 merges in a row 
@@ -65,7 +65,11 @@ globalMergeAlt <- function(shard_results, prior){
     
     all_corrs <- corrBin_Calc(dim(fulleps)[1], c(1:dim(fulleps)[1]), fulleps, D, maxNCat)
     all_corrs[all_corrs < 0.05] <- NA
-    inds <- which(`dim<-`(all_corrs %in% head(sort(c(all_corrs), decreasing = TRUE), 3), dim(all_corrs)), arr.ind = TRUE) #Take 3 smallest
+    if (mergerejects > 5){
+      inds <- which(`dim<-`(all_corrs %in% head(sort(c(all_corrs), decreasing = TRUE)), dim(all_corrs)), arr.ind = TRUE) #Take all correlations > 0.05 now
+    } else{
+      inds <- which(`dim<-`(all_corrs %in% head(sort(c(all_corrs), decreasing = TRUE), 3), dim(all_corrs)), arr.ind = TRUE) #Take 3 highest
+    }
     
     if(nrow(inds) == 1){
       pair <- as.vector(inds[1,])
@@ -111,16 +115,19 @@ globalMergeAlt <- function(shard_results, prior){
       mergemodel[[m]]$eps <- numeric(0) #remove k2 from eps
       
       newentropy <- newentCalc(shard_results, mergemodel, entropy, k1_pos, k2_pos)
-      newELBO <- globalELBOCalcAlt(mergemodel, newentropy, prior)#FILL OUT
+      newELBO <- globalELBOCalcAlt(mergemodel, newentropy, prior, Kinit)#FILL OUT
       
       if (newELBO > currentELBO){
         shard_results <- mergemodel
-        #entropy <- newentropy
+        entropy <- newentropy
         currentELBO <- newELBO
+        cat("Global merge accepted, current ELBO: ", currentELBO, "\n", sep = "")
+        mergerejects <- 0
       } else {
+        cat("Global merge rejected, current ELBO: ", currentELBO, "\n", sep = "")
         mergerejects <- mergerejects + 1
+        cat("No. of consecutive rejections: ", mergerejects, "\n", sep = "")
       }
-      print(mergerejects)
     }
     
     if(k_shard2 > 1){
@@ -147,19 +154,20 @@ globalMergeAlt <- function(shard_results, prior){
       
       
       newentropy <- newentCalc(shard_results, mergemodel, entropy, k1_pos, k2_pos)
-      newELBO <- globalELBOCalcAlt(mergemodel, newentropy, prior)#FILL OUT
+      newELBO <- globalELBOCalcAlt(mergemodel, newentropy, prior, Kinit)#FILL OUT
       
       if (newELBO > currentELBO){
         shard_results <- mergemodel
-        #entropy <- newentropy
+        entropy <- newentropy
         currentELBO <- newELBO
-      } else if (newELBO < currentELBO & nrow(inds) == 1){
-        break
+        cat("Global merge accepted, current ELBO: ", currentELBO, "\n", sep = "")
+        mergerejects <- 0
       } else{
+        cat("Global merge rejected, current ELBO: ", currentELBO, "\n", sep = "")
         mergerejects <- mergerejects + 1
+        cat("No. of consecutive rejections: ", mergerejects, "\n", sep = "")
       }
-      
-      print(mergerejects)
+
     }
     
     
@@ -187,12 +195,7 @@ globalMergeAlt <- function(shard_results, prior){
 
 
 
-globalELBOCalcAlt <- function(mergemodel, entropy, prior){
-  
-  prioralpha <- prior$alpha #scalar 
-  prioreps <- t(prior$eps) #L * D matrix
-  maxNCat <- dim(prioreps)[[1]]
-  D <- dim(prioreps)[[2]]
+globalELBOCalcAlt <- function(mergemodel, entropy, prior, Kinit){
   
   fullalpha <- unlist(lapply(mergemodel, '[[', 1))
   fulleps <- lapply(mergemodel, '[[', 2)
@@ -204,16 +207,27 @@ globalELBOCalcAlt <- function(mergemodel, entropy, prior){
     }
     return(x)
   })
+  K <- length(fullalpha) #Total number of non-empty clusters
   
+  prioralpha <- rep(prior$alpha, K) #vector
+  prioreps <- t(prior$eps) #L * D matrix
+  maxNCat <- dim(prioreps)[[1]]
+  D <- dim(prioreps)[[2]]
   
-  Elogpi <- digamma(fullalpha) - digamma(sum(fullalpha)) #Taken from E step
+  truealpha <- c(fullalpha, rep(prior$alpha, Kinit - K))
+  trueprioralpha <- rep(prior$alpha, Kinit) #Take into account all clusters in prior
+  
+  Elogpi <- digamma(fullalpha) - digamma(sum(truealpha)) #Taken from E step
   ElogphiL <- lapply(fulleps, function(x) ElogphiLCalc(x, dim(x)[1], D, maxNCat)) #This calculation is independent over each K. Apply this to each eps and then sum everything
+  #Don't need to worry about zombie clusters for epsilon
   
   Tk <- fullalpha - prioralpha #T_k, sufficient stat
   epsminusprioreps <- lapply(fulleps, function(x) epsminuspriorepsCalc(x, prioreps, dim(x)[1], D, maxNCat)) #s_kil, sufficient stat
   
-  Cpostalpha <- lgamma(sum(fullalpha)) - sum(lgamma(fullalpha))
-  Cposteps <- lapply(fulleps, function(x) CpostepsCalc(x, dim(x)[1], D, maxNCat))
+  Cprioralpha <- lgamma(sum(trueprioralpha)) - sum(lgamma(prioralpha))
+  Cpostalpha <- lgamma(sum(truealpha)) - sum(lgamma(fullalpha))
+  Cprioreps <- CpriorepsCalc(prioreps, K, D, maxNCat) #makes a K x D matrix - total these for the prior constant for all non-empty clusters K 
+  Cposteps <- lapply(fulleps, function(x) CpostepsCalc(x, dim(x)[1], D, maxNCat)) #makes several cluster x D matrices 
   
   priorepsminusone <- lapply(fulleps, function(x) priorepsminusoneCalc(prioreps, dim(x)[1], D, maxNCat))
   epsminusone <- lapply(fulleps, function(x) epsminusoneCalc(x, dim(x)[1], D, maxNCat))
@@ -223,9 +237,10 @@ globalELBOCalcAlt <- function(mergemodel, entropy, prior){
   
   Exp2 <- sum(Tk * Elogpi) #E(logp(Z|pi)) DONE
   
-  Exp3 <- sum((prioralpha - 1)*Elogpi) #E(logp(pi)), sum will sum over all k. DONE WITHOUT CONSTANT
+  Exp3 <- sum((prioralpha - 1)*Elogpi) + Cprioralpha #E(logp(pi)), sum will sum over all k. DONE
   
-  Exp4 <- sum(unlist(Map(function(x, y) x * y, priorepsminusone, ElogphiL))) #E(logp(phi)) DONE WITHOUT CONSTANT
+  Exp4 <- sum(unlist(Map(function(x, y) x * y, priorepsminusone, ElogphiL))) + sum(Cprioreps) #E(logp(phi)) DONE 
+  
   Exp5 <- entropy #DONE
   
   Exp6 <- sum((fullalpha - 1)*Elogpi) + Cpostalpha #E(logq(pi)) DONE
@@ -286,3 +301,4 @@ newentCalc <- function(oldmodel, mergemodel, entropy, k1_pos, k2_pos){
   return( entropy - sum(unlist(oldent)) + sum(unlist(newent)))
   
 }
+

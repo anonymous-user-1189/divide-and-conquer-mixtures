@@ -4,13 +4,12 @@
 
 Rcpp::sourceCpp('MergesCpp.cpp')
 
-mergeMove <- function(X, model, prior, currentELBO){
+mergeMove <- function(X, model, prior, currentELBO, Kinit){
   
   N = dim(X)[1]
   D = dim(X)[2]
   K = length(model$alpha)
-  nCat <- as.vector(apply(X, 2, max)) #number of categories in each variable
-  maxNCat <- max(nCat)
+  maxNCat = dim(model$eps)[[2]]
   
   eps <- model$eps
   
@@ -18,15 +17,15 @@ mergeMove <- function(X, model, prior, currentELBO){
   n_clusts <- length(used_clusts)
   all_divs <- corrBin_Calc(n_clusts, used_clusts, eps, D, maxNCat)
   all_divs[all_divs < 0.05] <- NA
-  inds <- which(`dim<-`(all_divs %in% head(sort(c(all_divs), decreasing = TRUE), 3), dim(all_divs)), arr.ind = TRUE) #Take 3 smallest
+  inds <- which(`dim<-`(all_divs %in% head(sort(c(all_divs), decreasing = TRUE), 3), dim(all_divs)), arr.ind = TRUE) #Take 3 highest
   
   if(nrow(inds) == 1){
     pair <- as.vector(inds[1,])
   }else if(nrow(inds) > 1){
     pair <- as.vector(inds[sample.int(nrow(inds), 1),])
   }else{
-    print("No merge clusters proposed")
-    return(model)
+    cat("No merge clusters proposed", "\n", sep = "")
+    return(list(model = model, ELBO = currentELBO))
   }
   
   k1 <- used_clusts[pair[1]]
@@ -42,20 +41,20 @@ mergeMove <- function(X, model, prior, currentELBO){
   
   mergemodel <- maxStep(X, mergemodel, prior) #updates parameters for alpha, eps based on new clusters
   
-  mergemodel <- expectStep(X, mergemodel) #allow obs to move in and out of new cluster
+  mergemodel <- expectStep(X, mergemodel, prior, Kinit) #allow obs to move in and out of new cluster
   
   mergemodel <- maxStep(X, mergemodel, prior) #update parameters for the clusters
   
-  newELBO <- ELBOCalcMStep(X, mergemodel, prior)
+  newELBO <- ELBOCalcMStep(X, mergemodel, prior, Kinit)
   
   if(newELBO > currentELBO){
     mergemodel$merges <- mergemodel$merges + 1
-    print("Merge accepted")
-    return(mergemodel)
+    cat("Merge accepted, ELBO: ", newELBO, "\n", sep = "")
+    return(list(model = mergemodel, ELBO = newELBO))
   }
   else{
-    print("Merge rejected")
-    return(model)
+    cat("Merge rejected, ELBO: ", currentELBO, "\n", sep = "")
+    return(list(model = model, ELBO = currentELBO))
   } 
   
 }

@@ -1,7 +1,8 @@
 ######
-#Implement MerDel with clusters selected for merging via correlation, time measured for each 'laps' model, and a laps = 0 simulation.
-#'mixturemodel_merdelTIME'.
+#Implement MerDel with clusters selected for merging via correlation, time measured for each 'laps' model. *NO laps = 0 SIMULATION*
+#'mixturemodel_merdelTIME' (make sure this isn't confused with simulation including laps = 0)
 #####
+
 
 library(klaR)
 library(tidyverse)
@@ -17,6 +18,7 @@ library(RcppArmadillo)
 Rcpp::sourceCpp('MixModel.cpp')
 Rcpp::sourceCpp('MixModelArmaNew.cpp')
 
+#Variational mixtures for categorical distributions
 check_convergence<- function(ELBO, iter, maxiter, tol){
   if (iter > 1 && abs(ELBO[iter] - ELBO[iter - 1]) < tol && abs(ELBO[iter-1] - ELBO[iter-2] < tol) && 
       abs(ELBO[iter-2] - ELBO[iter-3] < tol)){
@@ -32,7 +34,6 @@ check_convergence<- function(ELBO, iter, maxiter, tol){
   }
 }
 
-
 #data = 'X' observed variables
 #K = number of clusters
 #alpha = prior parameters for clusters
@@ -40,7 +41,7 @@ check_convergence<- function(ELBO, iter, maxiter, tol){
 #tol = convergence criteria
 #laps = number of E-M iterations to do before performing merge/delete. Numeric, set higher than maxiter if you don't want merge/delete
 
-mixturemodel_merdelTIME <- function(data, Kinit, alpha, maxiter, tol, laps, verbose = FALSE){
+mixturemodel_merdelPar <- function(data, Kinit, alpha, maxiter, tol, laps, verbose = FALSE){
   ################################################
   #Process dataset
   start.time <- Sys.time()
@@ -104,7 +105,34 @@ mixturemodel_merdelTIME <- function(data, Kinit, alpha, maxiter, tol, laps, verb
     lap <- laps[k]
     for (iter in 1:maxiter){
       if (lap %% 1 == 0){
-        model = expectStep(X, model, prior, Kinit) #Expectation step
+        
+        modelpar <- lapply(1:4, function(i) {
+          start_idx <- (i - 1) * 5000 + 1
+          end_idx <- i * 5000
+          
+          list(
+            alpha = model$alpha,
+            eps = model$eps,
+            rnk = model$rnk[start_idx:end_idx,]
+          )
+        })
+        
+        modelpar2 <- foreach(k = 1:4) %dorng% {
+          start_idx <- (k - 1) * 5000 + 1
+          end_idx <- k * 5000
+          model = expectStep(X[start_idx:end_idx,], modelpar[[k]], prior, Kinit)
+          model
+        }
+        
+
+        model = list(alpha = modelpar[[1]]$alpha,
+                     eps = modelpar[[1]]$eps,
+                     labels = unlist(lapply(modelpar, '[[', 3)),
+                     totalmoves = modelpar[[1]]$totalmoves,
+                     merges = modelpar[[1]]$merges,
+                     deletes = modelpar[[1]]$deletes,
+                     rnk = rbind(modelpar[[1]]$rnk, modelpar[[2]]$rnk, modelpar[[3]]$rnk, modelpar[[4]]$rnk)) 
+        
         model = maxStep(X, model, prior) #Maximisation step
         ELBO[iter] = secondELBO[ELBOcounter,1] = ELBOCalcMStep(X, model, prior, Kinit) #ELBO
         Cl[iter] = length(unique(model$labels)) #Counts number of non-empty clusters
@@ -143,66 +171,11 @@ mixturemodel_merdelTIME <- function(data, Kinit, alpha, maxiter, tol, laps, verb
     }
     end.time2 <- Sys.time()
     total_time <- difftime(end.time2, start.time2, unit = "secs") + total_time1
-    all_models[[k]] <- list(ELBO = ELBO[1:iter], secondELBO = secondELBO[1:ELBOcounter,], Cl = Cl[1:iter], model = model, time = total_time)
+    all_models[[k]] <- list(ELBO = ELBO[1:(iter)], secondELBO = secondELBO[1:ELBOcounter,], Cl = Cl[1:iter], model = model, time = total_time, prior = prior)
     
   }
   
-  #Trying just EM
-  
-  start.time3 <- Sys.time()
-  ELBO = Cl = secondELBO = rep(-Inf,maxiter*2) #record ELBO and no of clusters at each iteration
-  secondELBO <- as.data.frame(cbind(secondELBO, Time = NA))
-  
-  model = list(alpha = rep(prior$alpha, Kinit),
-               eps = firstepsCalc(Kinit, maxNCat, D, N, prior$eps, X, clusterInit),
-               labels = clusterInit,
-               totalmoves = 0,
-               merges = 0,
-               deletes = 0) 
-  
-  
-  ########################################
-  ELBOcounter <- 1
-  
-  model = expectStep(X, model, prior, Kinit) #Expectation step
-  model = maxStep(X, model, prior) #Maximisation step
-  ELBO[1] = secondELBO[ELBOcounter,1] = ELBOCalcMStep(X, model, prior, Kinit) #ELBO
-  Cl[1] = length(unique(model$labels))
-  
-  secondELBO[ELBOcounter,2] <- Sys.time()
-  ELBOcounter <- ELBOcounter + 1
-  
-  if(verbose){
-    cat("Iteration number 1, ELBO: ", ELBO[1], "\n", sep = "")
-  }
-  
-  for (iter in 1:maxiter){
-    mergeResult = mergeMove(X, model, prior, secondELBO[ELBOcounter - 1,1], Kinit)
-    model = mergeResult$model
-    secondELBO[ELBOcounter:(ELBOcounter+3),1] = rep(mergeResult$ELBO, 4)
-    secondELBO[ELBOcounter:(ELBOcounter+3),2] <- Sys.time()
-    ELBOcounter <- ELBOcounter + 4
-    
-    deleteResult = deleteMove(X, model, prior, secondELBO[ELBOcounter - 1,1], Kinit)
-    model = deleteResult$model
-    secondELBO[ELBOcounter:(ELBOcounter+3),1] = rep(deleteResult$ELBO, 4)
-    secondELBO[ELBOcounter:(ELBOcounter+3),2] <- Sys.time()
-    
-    ELBO[iter + 1] <- secondELBO[ELBOcounter,1]
-    Cl[iter+1] = length(unique(model$labels))
-    ELBOcounter <- ELBOcounter + 4
-    model$totalmoves <- model$totalmoves + 1
-    
-    
-    if(check_convergence(ELBO, iter, maxiter, tol)) break
-    
-  }
-  
-  end.time3 <- Sys.time()
-  total_time2 <- difftime(end.time3, start.time3, unit = "secs") + total_time1
-  all_models[[length(laps) + 1]] <- list(ELBO = ELBO[1:(iter + 1)], secondELBO = secondELBO[1:ELBOcounter,], Cl = Cl[1:(iter+1)], model = model, time = total_time2)
-  
-  names(all_models) <- c(laps, 0)
+  names(all_models) <- c(laps)
   return(all_models)
   
 }
