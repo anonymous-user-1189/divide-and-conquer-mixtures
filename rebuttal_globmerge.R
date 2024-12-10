@@ -17,8 +17,8 @@ library(doParallel)
 library(doRNG)
 registerDoParallel(4)
 
-
-globalmergeSim5 <- for(k in 1:10) { #10 simulated datasets
+globalmergeSim5again <- list()
+for(k in 1:5) { #10 simulated datasets
   
   sampledata <- GenerateSampleData(20000, 12, c(0.05, 0.05, 0.05, 0.05, 0.05, 0.1, 0.15, 0.1, 0.1, 0.2, 0.04, 0.06), 100, 0)
   data <- sampledata[[1]]
@@ -38,9 +38,9 @@ globalmergeSim5 <- for(k in 1:10) { #10 simulated datasets
     
     #Parallel
     mainmix2 <- mixturemodel_merdelPar(data, 15, 0.01, 1000, 0.000005, 5) #Run merge delete model 5 times for good measure
-    all_results_Par[w, 2] <- mainmix2[[1]]$time
-    all_results_Par[w, 3] <- adjustedRandIndex(mainmix2[[1]]$model$labels, sampledata[[2]]$Cluster)
-    all_results_Par[w, 4] <- length(unique(mainmix2[[1]]$model$labels))
+    all_results_par[w, 2] <- mainmix2[[1]]$time
+    all_results_par[w, 3] <- adjustedRandIndex(mainmix2[[1]]$model$labels, sampledata[[2]]$Cluster)
+    all_results_par[w, 4] <- length(unique(mainmix2[[1]]$model$labels))
     
     
     #Shuffle (proposed model)
@@ -62,25 +62,26 @@ globalmergeSim5 <- for(k in 1:10) { #10 simulated datasets
     }
     end.timeshuffle <- Sys.time()
     
-    shuffled_results2 <- lapply(shuffled_results, '[[', 3)
-    mix_times <- unlist(lapply(shuffled_results, '[[', 4))
-    indiv_ARI <- lapply(shuffled_results, '[[', 3)
-    for (i in 1:4){
-      indiv_ARI[[i]] <- adjustedRandIndex(indiv_ARI[[i]]$labels, label_shuffle[((i - 1) * 5000 + 1) :  (i * 5000)])
-    }
-    indiv_ARI <- unlist(indiv_ARI)
+    shuffled_results2 <- lapply(shuffled_results, '[[', 4)
+    mix_times <- unlist(lapply(shuffled_results, '[[', 5))
+    prior <- shuffled_results[[1]]$prior
+    #indiv_ARI <- lapply(shuffled_results, '[[', 3)
+    #for (i in 1:4){
+      #indiv_ARI[[i]] <- adjustedRandIndex(indiv_ARI[[i]]$labels, label_shuffle[((i - 1) * 5000 + 1) :  (i * 5000)])
+    #}
+    #indiv_ARI <- unlist(indiv_ARI)
     
     shuffle_time <- shuffle_time + difftime(end.timeshuffle, start.timeshuffle, units = 'secs')
     
 
     all_results_shuffle1[w, 7] <- max(mix_times)
     all_results_shuffle2[w, 7] <- max(mix_times)
-    all_results_shuffle1[w, 8] <- mean(indiv_ARI)
-    all_results_shuffle2[w, 8] <- mean(indiv_ARI)
+    #all_results_shuffle1[w, 8] <- mean(indiv_ARI)
+    #all_results_shuffle2[w, 8] <- mean(indiv_ARI)
     
     
     start.time <- Sys.time()
-    global <- globalMerge(shuffled_results, prior, 60)
+    global <- globalMerge(shuffled_results2, prior, 60)
     end.time <- Sys.time()
     
     overallLabels <- unlist(global$labels)
@@ -91,7 +92,7 @@ globalmergeSim5 <- for(k in 1:10) { #10 simulated datasets
     all_results_shuffle1[w, 6] <- difftime(end.time, start.time, units = 'secs')
     
     start.time <- Sys.time()
-    global2 <- globalMergeAlt(shuffled_results, prior, 60)
+    global2 <- globalMergeAlt(shuffled_results2, prior, 60)
     end.time <- Sys.time()
     
     overallLabels <- unlist(global2$labels)
@@ -103,9 +104,10 @@ globalmergeSim5 <- for(k in 1:10) { #10 simulated datasets
     
   }
   
-  all_results <- rbind(all_results_shuffle1, all_results_shuffle2, all_results_full)
-  all_results
+  all_results <- rbind(all_results_shuffle1, all_results_shuffle2, all_results_full, all_results_par)
+  
+  globalmergeSim5again[[k]] <- all_results
   
 }
 
-save(globalmergeSim5, file = 'globalmergeSim5.RData')
+save(globalmergeSim5again, file = 'globalmergeSim5again.RData')
